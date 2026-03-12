@@ -12,6 +12,134 @@ from typing import Dict, Any, Optional, List, Union
 import csv
 
 
+US_COUNTRY_VALUES = {"US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"}
+
+US_STATE_NAME_TO_CODE = {
+    "ALABAMA": "AL",
+    "ALASKA": "AK",
+    "ARIZONA": "AZ",
+    "ARKANSAS": "AR",
+    "CALIFORNIA": "CA",
+    "COLORADO": "CO",
+    "CONNECTICUT": "CT",
+    "DELAWARE": "DE",
+    "FLORIDA": "FL",
+    "GEORGIA": "GA",
+    "HAWAII": "HI",
+    "IDAHO": "ID",
+    "ILLINOIS": "IL",
+    "INDIANA": "IN",
+    "IOWA": "IA",
+    "KANSAS": "KS",
+    "KENTUCKY": "KY",
+    "LOUISIANA": "LA",
+    "MAINE": "ME",
+    "MARYLAND": "MD",
+    "MASSACHUSETTS": "MA",
+    "MICHIGAN": "MI",
+    "MINNESOTA": "MN",
+    "MISSISSIPPI": "MS",
+    "MISSOURI": "MO",
+    "MONTANA": "MT",
+    "NEBRASKA": "NE",
+    "NEVADA": "NV",
+    "NEW HAMPSHIRE": "NH",
+    "NEW JERSEY": "NJ",
+    "NEW MEXICO": "NM",
+    "NEW YORK": "NY",
+    "NORTH CAROLINA": "NC",
+    "NORTH DAKOTA": "ND",
+    "OHIO": "OH",
+    "OKLAHOMA": "OK",
+    "OREGON": "OR",
+    "PENNSYLVANIA": "PA",
+    "RHODE ISLAND": "RI",
+    "SOUTH CAROLINA": "SC",
+    "SOUTH DAKOTA": "SD",
+    "TENNESSEE": "TN",
+    "TEXAS": "TX",
+    "UTAH": "UT",
+    "VERMONT": "VT",
+    "VIRGINIA": "VA",
+    "WASHINGTON": "WA",
+    "WEST VIRGINIA": "WV",
+    "WISCONSIN": "WI",
+    "WYOMING": "WY",
+    "DISTRICT OF COLUMBIA": "DC",
+}
+
+US_STATE_CODES = set(US_STATE_NAME_TO_CODE.values())
+
+EXCLUDED_STATE_CODES = {
+    "AK",  # Alaska
+    "ID",  # Idaho
+    "KS",  # Kansas
+    "LA",  # Louisiana
+    "MS",  # Mississippi
+    "MO",  # Missouri
+    "MT",  # Montana
+    "NM",  # New Mexico
+    "ND",  # North Dakota
+    "TX",  # Texas
+    "UT",  # Utah
+    "WY",  # Wyoming
+}
+
+
+def _normalize_state_code(raw_state: Optional[str]) -> Optional[str]:
+    if not raw_state:
+        return None
+
+    state = str(raw_state).strip().upper()
+    if not state:
+        return None
+
+    if state in US_STATE_CODES:
+        return state
+
+    return US_STATE_NAME_TO_CODE.get(state)
+
+
+def _extract_country_and_state(data: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    address = data.get("address") if isinstance(data.get("address"), dict) else {}
+
+    country = (
+        data.get("country")
+        or address.get("country")
+        or data.get("countryName")
+        or address.get("countryName")
+    )
+    if country is not None:
+        country = str(country).strip().upper() or None
+
+    state = data.get("state") or address.get("state")
+    state_code = _normalize_state_code(state)
+
+    return country, state_code
+
+
+def _passes_location_filter(data: Dict[str, Any]) -> bool:
+    country, state_code = _extract_country_and_state(data)
+
+    # If country is present and not US, reject.
+    if country and country not in US_COUNTRY_VALUES:
+        return False
+
+    # If country is missing, infer US only when state can be mapped to a US state code.
+    if not country and not state_code:
+        return False
+
+    # Reject when state is missing (cannot apply excluded-state policy reliably).
+    if not state_code:
+        return False
+
+    # Enforce excluded-state policy.
+    if state_code in EXCLUDED_STATE_CODES:
+        return False
+
+    return True
+
+
 class FeatureExtractor:
     """
     Extracts 79 property features from Zillow GraphQL and RapidAPI JSON data.
@@ -589,11 +717,17 @@ def process_directory(directory_path: Path, output_csv: Path) -> None:
     print(f"Processing {len(json_files)} files from {directory_path}")
     
     all_features = []
+    skipped_location = 0
     
     for json_file in json_files:
         try:
             with open(json_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+
+            if not _passes_location_filter(data):
+                skipped_location += 1
+                print(f"  - {json_file.name}: skipped by location filter")
+                continue
             
             extractor = FeatureExtractor(data)
             features = extractor.extract_all()
@@ -616,6 +750,9 @@ def process_directory(directory_path: Path, output_csv: Path) -> None:
         print(f"\n✓ Exported {len(all_features)} records to {output_csv}")
     else:
         print("No features extracted.")
+
+    if skipped_location:
+        print(f"Skipped {skipped_location} records due to location constraints")
 
 
 if __name__ == '__main__':
