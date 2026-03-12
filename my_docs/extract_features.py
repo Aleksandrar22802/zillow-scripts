@@ -12,134 +12,6 @@ from typing import Dict, Any, Optional, List, Union
 import csv
 
 
-US_COUNTRY_VALUES = {"US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"}
-
-US_STATE_NAME_TO_CODE = {
-    "ALABAMA": "AL",
-    "ALASKA": "AK",
-    "ARIZONA": "AZ",
-    "ARKANSAS": "AR",
-    "CALIFORNIA": "CA",
-    "COLORADO": "CO",
-    "CONNECTICUT": "CT",
-    "DELAWARE": "DE",
-    "FLORIDA": "FL",
-    "GEORGIA": "GA",
-    "HAWAII": "HI",
-    "IDAHO": "ID",
-    "ILLINOIS": "IL",
-    "INDIANA": "IN",
-    "IOWA": "IA",
-    "KANSAS": "KS",
-    "KENTUCKY": "KY",
-    "LOUISIANA": "LA",
-    "MAINE": "ME",
-    "MARYLAND": "MD",
-    "MASSACHUSETTS": "MA",
-    "MICHIGAN": "MI",
-    "MINNESOTA": "MN",
-    "MISSISSIPPI": "MS",
-    "MISSOURI": "MO",
-    "MONTANA": "MT",
-    "NEBRASKA": "NE",
-    "NEVADA": "NV",
-    "NEW HAMPSHIRE": "NH",
-    "NEW JERSEY": "NJ",
-    "NEW MEXICO": "NM",
-    "NEW YORK": "NY",
-    "NORTH CAROLINA": "NC",
-    "NORTH DAKOTA": "ND",
-    "OHIO": "OH",
-    "OKLAHOMA": "OK",
-    "OREGON": "OR",
-    "PENNSYLVANIA": "PA",
-    "RHODE ISLAND": "RI",
-    "SOUTH CAROLINA": "SC",
-    "SOUTH DAKOTA": "SD",
-    "TENNESSEE": "TN",
-    "TEXAS": "TX",
-    "UTAH": "UT",
-    "VERMONT": "VT",
-    "VIRGINIA": "VA",
-    "WASHINGTON": "WA",
-    "WEST VIRGINIA": "WV",
-    "WISCONSIN": "WI",
-    "WYOMING": "WY",
-    "DISTRICT OF COLUMBIA": "DC",
-}
-
-US_STATE_CODES = set(US_STATE_NAME_TO_CODE.values())
-
-EXCLUDED_STATE_CODES = {
-    "AK",  # Alaska
-    "ID",  # Idaho
-    "KS",  # Kansas
-    "LA",  # Louisiana
-    "MS",  # Mississippi
-    "MO",  # Missouri
-    "MT",  # Montana
-    "NM",  # New Mexico
-    "ND",  # North Dakota
-    "TX",  # Texas
-    "UT",  # Utah
-    "WY",  # Wyoming
-}
-
-
-def _normalize_state_code(raw_state: Optional[str]) -> Optional[str]:
-    if not raw_state:
-        return None
-
-    state = str(raw_state).strip().upper()
-    if not state:
-        return None
-
-    if state in US_STATE_CODES:
-        return state
-
-    return US_STATE_NAME_TO_CODE.get(state)
-
-
-def _extract_country_and_state(data: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
-    address = data.get("address") if isinstance(data.get("address"), dict) else {}
-
-    country = (
-        data.get("country")
-        or address.get("country")
-        or data.get("countryName")
-        or address.get("countryName")
-    )
-    if country is not None:
-        country = str(country).strip().upper() or None
-
-    state = data.get("state") or address.get("state")
-    state_code = _normalize_state_code(state)
-
-    return country, state_code
-
-
-def _passes_location_filter(data: Dict[str, Any]) -> bool:
-    country, state_code = _extract_country_and_state(data)
-
-    # If country is present and not US, reject.
-    if country and country not in US_COUNTRY_VALUES:
-        return False
-
-    # If country is missing, infer US only when state can be mapped to a US state code.
-    if not country and not state_code:
-        return False
-
-    # Reject when state is missing (cannot apply excluded-state policy reliably).
-    if not state_code:
-        return False
-
-    # Enforce excluded-state policy.
-    if state_code in EXCLUDED_STATE_CODES:
-        return False
-
-    return True
-
-
 class FeatureExtractor:
     """
     Extracts 79 property features from Zillow GraphQL and RapidAPI JSON data.
@@ -358,109 +230,6 @@ class FeatureExtractor:
         val = self.reso_facts.get('fireplaces')
         if isinstance(val, (int, float)):
             return int(val) if val > 0 else 0
-        # Could be a string or list
-        # ========================================================================
-        # SIZE FEATURES (4 total)
-        # ========================================================================
-        # Basic property dimensions: living area, lot size, bedroom/bathroom counts
-    
-        def _extract_living_area_sqft(self) -> Optional[float]:
-            """Extract interior living area in square feet."""
-            return self.data.get('livingArea')
-    
-        def _extract_lot_size_sqft(self) -> Optional[float]:
-            """Extract total lot size in square feet."""
-            return self.data.get('lotSize')
-    
-        def _extract_bedrooms(self) -> Optional[int]:
-            """Extract number of bedrooms."""
-            return self.data.get('bedrooms')
-    
-        def _extract_bathrooms(self) -> Optional[float]:
-            """Extract number of bathrooms (may include half-baths as 0.5)."""
-            return self.data.get('bathrooms')
-    
-        def _extract_total_bathrooms(self) -> Optional[float]:
-            """Duplicate of bathrooms for consistency in feature list."""
-            return self.data.get('bathrooms')
-    
-        # ========================================================================
-        # LOCATION FEATURES (4 total)
-        # ========================================================================
-        # Geographic coordinates and construction year
-    
-        def _extract_latitude(self) -> Optional[float]:
-            """Extract latitude coordinate of property."""
-            return self.data.get('latitude')
-    
-        def _extract_longitude(self) -> Optional[float]:
-            """Extract longitude coordinate of property."""
-            return self.data.get('longitude')
-    
-        def _extract_year_built(self) -> Optional[int]:
-            """Extract year the property was built."""
-            return self.data.get('yearBuilt')
-    
-        def _extract_property_age(self) -> Optional[int]:
-            """Calculate property age in years from yearBuilt.
-        
-            Returns:
-                Years since construction (current_year - year_built).
-                Returns None if yearBuilt is missing.
-            """
-            year_built = self.data.get('yearBuilt')
-            if year_built:
-                return datetime.now().year - year_built
-            return None
-    
-        # ========================================================================
-        # STRUCTURAL FEATURES (4 total)
-        # ========================================================================
-        # Building structure details: stories, bathroom breakdowns
-    
-        def _extract_stories(self) -> Optional[int]:
-            """Extract number of stories/floors in the property."""
-            return self.reso_facts.get('stories')
-    
-        def _extract_bathrooms_full(self) -> Optional[int]:
-            """Extract count of full bathrooms (have tub/shower and toilet)."""
-            return self.reso_facts.get('bathroomsFull')
-    
-        def _extract_bathrooms_half(self) -> Optional[int]:
-            """Extract count of half-bathrooms (have toilet and sink only)."""
-            return self.reso_facts.get('bathroomsHalf')
-    
-        def _extract_bathrooms_three_quarter(self) -> Optional[int]:
-            """Extract count of 3/4 bathrooms (have toilet, sink, and shower only).
-        
-            Note: May not always be present in the API schema.
-            """
-            return self.reso_facts.get('bathroomsThreeQuarter')
-    
-        # ========================================================================
-        # PARKING FEATURES (5 total)
-        # ========================================================================
-        # Parking capacity: garage, covered, open, and total spaces
-    
-        def _extract_garage_capacity(self) -> Optional[int]:
-            """Extract number of garage parking spaces."""
-            return self.reso_facts.get('garageParkingCapacity')
-    
-        def _extract_covered_parking_capacity(self) -> Optional[int]:
-            """Extract number of covered parking spaces (carport style)."""
-            return self.reso_facts.get('coveredParkingCapacity')
-    
-        def _extract_open_parking_capacity(self) -> Optional[int]:
-            """Extract number of open/uncovered parking spaces."""
-            return self.reso_facts.get('openParkingCapacity')
-    
-        def _extract_parking_capacity_total(self) -> Optional[int]:
-            """Extract total parking capacity (may be sum of all types)."""
-            return self.reso_facts.get('parkingCapacity')
-    
-        def _extract_total_parking(self) -> Optional[int]:
-            """Duplicate of parking_capacity_total for consistency in feature list."""
-            return self.reso_facts.get('parkingCapacity')
         return 1 if val else 0
     
     def _extract_electric_count(self) -> Optional[int]:
@@ -717,17 +486,11 @@ def process_directory(directory_path: Path, output_csv: Path) -> None:
     print(f"Processing {len(json_files)} files from {directory_path}")
     
     all_features = []
-    skipped_location = 0
     
     for json_file in json_files:
         try:
             with open(json_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-
-            if not _passes_location_filter(data):
-                skipped_location += 1
-                print(f"  - {json_file.name}: skipped by location filter")
-                continue
             
             extractor = FeatureExtractor(data)
             features = extractor.extract_all()
@@ -750,9 +513,6 @@ def process_directory(directory_path: Path, output_csv: Path) -> None:
         print(f"\n✓ Exported {len(all_features)} records to {output_csv}")
     else:
         print("No features extracted.")
-
-    if skipped_location:
-        print(f"Skipped {skipped_location} records due to location constraints")
 
 
 if __name__ == '__main__':
